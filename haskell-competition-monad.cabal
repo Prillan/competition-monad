@@ -58,12 +58,13 @@ library
   other-extensions:    TypeApplications
   
   -- Other library packages from which modules are imported.
-  build-depends:       base >=4.12 && <4.13
+  build-depends:       base
                      , containers
-                     , free
+--                     , free
 --                     , probability
                      , MonadRandom
                      , set-monad
+                     , transformers
   
   -- Directories containing source files.
   hs-source-dirs:      src
