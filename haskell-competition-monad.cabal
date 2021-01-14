@@ -61,7 +61,7 @@ library
   build-depends:       base
                      , containers
 --                     , free
---                     , probability
+                     , probability
                      , MonadRandom
                      , set-monad
                      , transformers

@@ -3,6 +3,7 @@ let compilerSet = pkgs.haskell.packages.ghc8102;
     dependencies = p: with p; [
       containers
       # free
+      probability
       MonadRandom
       set-monad
       transformers

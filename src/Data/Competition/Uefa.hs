@@ -3,33 +3,43 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeApplications #-}
 module Data.Competition.Uefa where
+
+import qualified Control.Monad.Explore as Ex
 
 import Data.List (sortBy, sortOn, groupBy)
 import Data.Competition
 import Data.Ord (comparing)
 
+import Data.Ratio
 import Data.Bifunctor (second)
 import Data.Functor.Identity
 import Control.Monad ((>=>))
 import Control.Monad.Trans.Class (MonadTrans, lift)
 import Control.Monad.Trans.State (StateT, evalStateT, runStateT, modify, get, modify')
 
+import qualified Numeric.Probability.Distribution as D
+import qualified Numeric.Probability.Random as R
 
 groupOn x = groupBy (\a b -> x a == x b)
 
 type Evaluator = Player -> Player -> (Int, Int)
+type EvaluatorM m = Player -> Player -> m (Int, Int)
 
 idEval (Player p1) (Player p2) = (p1, 0)
 
 class Monad m => MonadScoreMatch m where
   scoreMatch :: Player -> Player -> m ScoreMatch
 
+class Monad m => MonadSetHistory m where
+  setHistory :: History -> m ()
+
 data ScoreMatch  = ScoreMatch { mPlayerA :: Player
                               , mPlayerB :: Player
                               , mScoreA :: Int
                               , mScoreB :: Int }
-  deriving Show
+  deriving (Show, Eq, Ord)
 
 scoreMatchResult :: ScoreMatch -> MatchResult ()
 scoreMatchResult m =
@@ -58,6 +68,30 @@ instance Monad m => MonadScoreMatch (UefaPureEvaluatorT m) where
         sm = ScoreMatch pa pb sa sb
     modify' (second (++ [sm]))
     pure sm
+
+
+newtype UefaMonadEvaluatorT m a
+  = UefaMonadEvaluatorT (StateT (EvaluatorM m, History) m a)
+  deriving (Functor, Applicative, Monad)
+
+instance MonadTrans UefaMonadEvaluatorT where
+  lift = UefaMonadEvaluatorT . lift
+
+runUefaMonadEvaluatorT (UefaMonadEvaluatorT s) eval = do
+  (r, (_, h)) <- runStateT s (eval, [])
+  pure (r, h)
+
+instance Monad m => MonadScoreMatch (UefaMonadEvaluatorT m) where
+  scoreMatch pa pb = UefaMonadEvaluatorT $ do
+    (eval, history) <- get
+    (sa, sb) <- lift $ eval pa pb
+    let sm = ScoreMatch pa pb sa sb
+    modify' (second (++ [sm]))
+    pure sm
+
+instance Monad m => MonadSetHistory (UefaMonadEvaluatorT m) where
+  setHistory h = UefaMonadEvaluatorT $ modify' (second (const h))
+
 
 data TableEntry = TableEntry { tablePoints :: Int
                              , tableMatches :: Int
@@ -211,6 +245,26 @@ exampleHistoryGrp3 = [ ScoreMatch (Player 1) (Player 2) 0 0
                      , ScoreMatch (Player 4) (Player 2) 0 2
                      , ScoreMatch (Player 4) (Player 3) 2 1 ]
 
+exampleHistoryGrp3NoLast = [ ScoreMatch (Player 1) (Player 2) 0 0
+                           , ScoreMatch (Player 1) (Player 3) 4 2
+--                           , ScoreMatch (Player 1) (Player 4) 4 2
+                           , ScoreMatch (Player 2) (Player 1) 0 1
+                           , ScoreMatch (Player 2) (Player 3) 4 1
+                           , ScoreMatch (Player 2) (Player 4) 3 0
+                           , ScoreMatch (Player 3) (Player 1) 1 2
+--                           , ScoreMatch (Player 3) (Player 2) 2 3
+                           , ScoreMatch (Player 3) (Player 4) 2 1
+                           , ScoreMatch (Player 4) (Player 1) 0 1
+                           , ScoreMatch (Player 4) (Player 2) 0 2
+                           , ScoreMatch (Player 4) (Player 3) 2 1 ]
+
+lastGrp3 :: (MonadScoreMatch m, MonadSetHistory m) => m ()
+lastGrp3 =
+  setHistory exampleHistoryGrp3NoLast
+  >> scoreMatch (Player 1) (Player 4)
+  >> scoreMatch (Player 3) (Player 2)
+  >> pure ()
+
 -- https://en.wikipedia.org/wiki/2020%E2%80%9321_UEFA_Nations_League_A#Group_2
 exampleHistoryGrp2 = [ ScoreMatch (Player 1) (Player 2) 4 2
                      , ScoreMatch (Player 1) (Player 3) 2 0
@@ -254,3 +308,30 @@ showTable t = unlines $ header:map showRow (zip [1..] t)
 
 adjustR n = reverse . adjustL n . reverse
 adjustL n s = take n (s ++ repeat ' ')
+
+exploreEval :: EvaluatorM Ex.Explore
+exploreEval _ _ = Ex.choose $ [ (a, b) | a <- [0..2]
+                                       , b <- [0..2] ]
+
+randEval :: (Num prob, Fractional prob, Ord prob)
+         => EvaluatorM (D.T prob)
+randEval _ _ =
+  (,) <$> D.relative (map fromInteger [10,9..0]) [0..10]
+      <*> D.relative (map fromInteger [10,9..0]) [0..10]
+
+pickEval :: EvaluatorM R.T
+pickEval x y = R.pick (randEval @Float x y)
+
+{-
+ Explore
+> Ex.remaining $ fmap (\(_, hs) -> uefaSort hs ps) $ runUefaMonadEvaluatorT lastGrp3 exploreEval
+[[Player 1,Player 2,Player 3,Player 4],[Player 1,Player 2,Player 4,Player 3]]
+
+ Probs.
+> fmap (\(_, hs) -> uefaSort hs ps) $ runUefaMonadEvaluatorT lastGrp3 randEval  
+fromFreqs [([Player 1,Player 2,Player 3,Player 4],0.533808018577967),([Player 1,Player 2,Player 4,Player 3],0.4661919814220353)]
+
+ Simulation 100 times
+> R.print . R.dist . replicate 100 $ fmap (\(_, hs) -> uefaSort hs ps) $ runUefaMonadEvaluatorT lastGrp3 pickEval
+fromFreqs [([Player 1,Player 2,Player 3,Player 4],0.5400000000000003),([Player 1,Player 2,Player 4,Player 3],0.46000000000000024)]
+ -}
