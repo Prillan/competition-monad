@@ -45,7 +45,7 @@ winner x y = \case
     Home -> x
     Away -> y
 
-maybeWinner :: id -> id -> MatchResult _x -> Maybe id
+maybeWinner :: id -> id -> MatchResult x -> Maybe id
 maybeWinner x y = \case
   Home  -> Just x
   Tie _ -> Nothing
@@ -102,7 +102,7 @@ orderedPairs (x:rest) = map (x,) rest ++ orderedPairs rest
 
 single [x] = x
 single [] = error "No players!"
-single _ = error "Too many players, wtf!?"
+single _ = error "Too many players..."
 
 bracket :: MonadSimpleMatch m => [Player] -> m Player
 bracket players = single <$> go players
